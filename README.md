@@ -32,6 +32,7 @@ symbolic_ws
 Create and activate a Conda environment for Sym-Q:
 ```cmd
 conda create -n SymQ python=3.9
+conda activate SymQ
 pip install -e NeuralSymbolicRegressionThatScales/src/
 pip install -r Sym-Q/requirements.txt 
 export PYTHONPATH=$PYTHONPATH:Joint_Supervised_Learning_for_SR
@@ -53,7 +54,7 @@ cd Sym-Q
 python train.py
 ```
 
-This generates a folder '/model/GENERATION_TIME' with the model weights and evaluation data. Generate beamsearch results for evaluation:
+This generates a folder `/model/GENERATION_TIME` with the model weights and evaluation data. Generate beamsearch results for evaluation:
 ```
 python beam_search.py --weights_path PATH_TO_WEIGHTS --target ssdnc_r2
 ```

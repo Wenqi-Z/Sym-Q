@@ -321,7 +321,7 @@ def heat_map_evaluation(model, dataset, cfg):
     count_ones = is_one.sum()
     percentage_ones = 0
 
-    return max_rank, acc_once, acc_top_2, percentage_ones
+    return max_rank, acc_once, acc_top_2
 
 
 def heat_map(model, dataset, cfg):
