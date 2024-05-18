@@ -34,8 +34,9 @@ Create and activate a Conda environment for Sym-Q:
 conda create -n SymQ python=3.9
 conda activate SymQ
 pip install -e NeuralSymbolicRegressionThatScales/src/
-pip install -r Sym-Q/requirements.txt 
-export PYTHONPATH=$PYTHONPATH:Joint_Supervised_Learning_for_SR
+pip install -r Sym-Q/requirements.txt
+cd Joint_Supervised_Learning_for_SR
+export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 ```
 
 ## Dataset Creation
