@@ -1,41 +1,50 @@
-import threading
-
 import numpy as np
 import torch
 
+import yaml
+from box import Box
 
-seq_to_action = {
-    "x_1": 0,
-    "x_2": 1,
-    "c": 2,
-    "abs": 3,
-    "add": 4,
-    "mul": 5,
-    "div": 6,
-    "sqrt": 7,
-    "exp": 8,
-    "log": 9,
-    "pow": 10,
-    "sin": 11,
-    "cos": 12,
-    "tan": 13,
-    "asin": 14,
-    "acos": 15,
-    "atan": 16,
-    "sinh": 17,
-    "cosh": 18,
-    "tanh": 19,
-    "coth": 20,
-    "-3": 21,
-    "-2": 22,
-    "-1": 23,
-    "0": 24,
-    "1": 25,
-    "2": 26,
-    "3": 27,
-    "4": 28,
-    "5": 29,
-}
+
+def load_cfg(path: str) -> Box:
+    with open(path, "r") as file:
+        # Load the YAML content
+        cfg = Box(yaml.safe_load(file))
+    return cfg
+
+
+# seq_to_action = {
+#     "x_1": 0,
+#     "x_2": 1,
+#     "c": 2,
+#     "abs": 3,
+#     "add": 4,
+#     "mul": 5,
+#     "div": 6,
+#     "sqrt": 7,
+#     "exp": 8,
+#     "log": 9,
+#     "pow": 10,
+#     "sin": 11,
+#     "cos": 12,
+#     "tan": 13,
+#     "asin": 14,
+#     "acos": 15,
+#     "atan": 16,
+#     "sinh": 17,
+#     "cosh": 18,
+#     "tanh": 19,
+#     "coth": 20,
+#     "-3": 21,
+#     "-2": 22,
+#     "-1": 23,
+#     "0": 24,
+#     "1": 25,
+#     "2": 26,
+#     "3": 27,
+#     "4": 28,
+#     "5": 29,
+# }
+
 
 BENCHMARK = {
     "Nguyen_1": "x_1**3 + x_1**2 + x_1",
@@ -92,58 +101,78 @@ def fix_seed(seed):
     torch.backends.cudnn.benchmark = False
 
 
-def seq_to_tree(sequence, max_step):
-    """
-    Convert a sequence of operations into a tree representation.
-
-    This function takes a sequence of operations and converts it into a tree-like
-    structure of specified maximum steps, with each operation represented as a
-    one-hot encoded vector.
-
-    Args:
-    sequence (list of str/int): A list of operations. Each operation can be
-                                represented as a string or an integer.
-    max_step (int): The maximum number of steps in the tree. This defines the
-                    height of the tree.
-
-    Returns:
-    torch.Tensor: A tensor representing the tree. The tensor has a shape of
-                  (max_step, len(seq_to_action)) and is of type float32. Each
-                  row in the tensor represents a step in the tree, with the
-                  corresponding operation encoded as a one-hot vector.
-    """
-    tree = torch.zeros((max_step, len(seq_to_action)), dtype=torch.float32)
+def seq_to_tree(sequence, cfg):
+    max_step = cfg.max_step
+    seq2action = get_seq2action(cfg)
+    tree = torch.zeros((max_step, len(seq2action)), dtype=torch.float32)
     for i, op_seq in enumerate(sequence):
-        tree[i, seq_to_action[op_seq]] = 1
+        tree[i, op_seq] = 1
 
     return tree
 
 
 def handle_timeout(signum, frame):
-    """
-    A function to handle a timeout signal.
-
-    This function is designed to be used as a handler for signal-based timeouts.
-    When a specified signal is caught, this function raises a TimeoutError.
-    Typically used in conjunction with signal.signal to handle, for example,
-    the SIGALRM signal.
-
-    Args:
-    signum (int): The signal number.
-    frame: Current stack frame (ignored in this function).
-
-    Raises:
-    TimeoutError: An error indicating that a timeout has occurred.
-
-    Example:
-    >>> import signal
-    >>> signal.signal(signal.SIGALRM, handle_timeout)
-    >>> signal.alarm(5)  # Set a 5-second alarm
-    >>> # Your code here
-    >>> signal.alarm(0)  # Disable the alarm
-
-    Note:
-    - This function is intended to be used as a signal handler and should not
-      be called directly in normal circumstances.
-    """
     raise TimeoutError("Time out")
+
+
+def fix_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
+def comp_wn(model):
+    K = 0
+    N = 0
+    for p in model.parameters():
+        N += torch.sum(p**2)
+        K += p.numel()
+    return torch.sqrt(N / K)
+
+
+def get_seq2action(cfg):
+    num_vars = cfg.num_vars
+    if num_vars < 1 or num_vars > 3:
+        raise ValueError("Invalid number of variables")
+
+    seq2action = {
+        "c": 0,
+        "abs": 1,
+        "add": 2,
+        "mul": 3,
+        "div": 4,
+        "sqrt": 5,
+        "exp": 6,
+        "ln": 7,
+        "pow": 8,
+        "sin": 9,
+        "cos": 10,
+        "tan": 11,
+        "-3": 12,
+        "-2": 13,
+        "-1": 14,
+        "0": 15,
+        "1": 16,
+        "2": 17,
+        "3": 18,
+        "4": 19,
+        "5": 20,
+        "asin": 21,
+        "acos": 22,
+        "atan": 23,
+        "sinh": 24,
+        "cosh": 25,
+        "tanh": 26,
+        "coth": 27,
+        "x_1": 28,
+    }
+
+    if num_vars == 2:
+        seq2action["x_2"] = 29
+    elif num_vars == 3:
+        seq2action["x_2"] = 29
+        seq2action["x_3"] = 30
+
+    return seq2action

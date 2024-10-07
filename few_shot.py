@@ -170,7 +170,9 @@ if __name__ == "__main__":
         "--resume_path", type=str, default="", help="Path to resume the model from"
     )
     parser.add_argument("--gpu_id", type=int, default=0, help="Gpu id")
-    parser.add_argument("--is_dummy", type=int, default=0, help="Whether training from scratch")
+    parser.add_argument(
+        "--is_dummy", type=int, default=0, help="Whether training from scratch"
+    )
     args = parser.parse_args()
 
     folder_path = os.path.dirname(args.resume_path)

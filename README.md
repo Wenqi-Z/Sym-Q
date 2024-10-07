@@ -5,15 +5,11 @@ Inspired by how human experts refine and adapt expressions, we introduce Symboli
 ## Workspace Setup
 To create the symbolic regression workspace with the necessary repositories, follow these steps:
 
-```cmd
+```bash
 mkdir symbolic_ws
 cd symbolic_ws
 git clone https://github.com/SymposiumOrganization/NeuralSymbolicRegressionThatScales.git
-git clone https://github.com/AILWQ/Joint_Supervised_Learning_for_SR.git
 git clone https://github.com/Wenqi-Z/Sym-Q.git
-cp -R NeuralSymbolicRegressionThatScales/src/nesymres Joint_Supervised_Learning_for_SR/src
-mkdir -p Joint_Supervised_Learning_for_SR/Dataset/2_var/5000000/Train
-mkdir -p Joint_Supervised_Learning_for_SR/Dataset/2_var/5000000/SSDNC
 ```
 
 After running the above commands, your workspace should have the following structure:
@@ -22,37 +18,50 @@ After running the above commands, your workspace should have the following struc
 symbolic_ws
 │
 └───NeuralSymbolicRegressionThatScales
-│
-└───Joint_Supervised_Learning_for_SR
 │ 
 └───Sym-Q
 ```
 
 ## Environment Setup
 Create and activate a Conda environment for Sym-Q:
-```cmd
+```bash
 conda create -n SymQ python=3.9
 conda activate SymQ
 pip install -e NeuralSymbolicRegressionThatScales/src/
 pip install -r Sym-Q/requirements.txt
-cd Joint_Supervised_Learning_for_SR
-export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 ```
 
 ## Dataset Creation
-Generate the dataset for training:
-```cmd
-cd Joint_Supervised_Learning_for_SR/data_creation
-python add_points_to_json.py
-python gen_SSDNC_benchmark.py
+Firstly, define the dataset configuration in `NeuralSymbolicRegressionThatScales/dataset_configuration.json`, for this project we use following settings:
+```json
+{
+    "max_len": 20,
+    "operators": "add:10,mul:10,sub:5,div:5,sqrt:4,pow2:4,pow3:2,pow4:1,pow5:1,ln:4,exp:4,sin:4,cos:4,tan:4",
+    "max_ops": 5,
+    "rewrite_functions": "",
+    "variables": ["x_1","x_2","x_3"], 
+    "eos_index": 1,
+    "pad_index": 0
+}
 ```
+We use 10 million skeletons as training dataset and 1000 skeletons as validation dataset. Generate the corresponding datasets with following commands:
+```bash
+python NeuralSymbolicRegressionThatScales/scripts/data_creation/dataset_creation.py --number_of_equations 10000000 --no-debug
+python NeuralSymbolicRegressionThatScales/scripts/data_creation/dataset_creation.py --number_of_equations 1000 --no-debug
+```
+Then you will have your raw dataset under `NeuralSymbolicRegressionThatScales/data/raw_datasets/NumberOfEquations`. We will sample 50 different constants to substitute the ones in the skeltons, you can configure the number in `Sym-Q/cfg.yaml`。 Also set the folder path to place your dataset in the `Sym-Q/cfg.yaml`. Run:
+```bash
+cd Sym-Q
+./run_parallel.sh
+```
+This will save `.h5` files under the folder you defined and each file contains the data based on 100 skeletons.
 
 
 ## Quick Start
+Download the pretrain weights under 10M skeletons from [NeSymReS]https://github.com/SymposiumOrganization/NeuralSymbolicRegressionThatScales/tree/main?tab=readme-ov-file under `Sym-Q/weights`.
 Train the Sym-Q model:
 ```cmd
-cd Sym-Q
-python train.py
+python train_var3.py
 ```
 
 This generates a folder `/model/GENERATION_TIME` with the model weights and evaluation data. Generate beamsearch results for evaluation:

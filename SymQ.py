@@ -1,24 +1,29 @@
 import torch
 import torch.nn as nn
 
-from encoder import SetEncoder, TreeEncoder
+from utils import get_seq2action
+from encoder import SetEncoder, TreeEncoder, RNNEncoder
 
 
 class SymQ(nn.Module):
-    """
-    Attributes:
-    - set_encoder (SetEncoder): Encoder for input point sets.
-    - tree_encoder (TreeStructureEncoder): Encoder for tree-structured data.
-    - device (torch.device): Device for storing tensors.
-    """
 
     def __init__(self, cfg, device):
         super(SymQ, self).__init__()
         self.device = device
+
+        cfg['SetEncoder']['dim_input'] = cfg['num_vars'] + 1
         self.set_encoder = SetEncoder(cfg["SetEncoder"]).to(device)
-        self.tree_encoder = TreeEncoder(cfg["TreeEncoder"]).to(device)
+
+        seq2action = get_seq2action(cfg)
+        cfg['TreeEncoder']['max_step'] = cfg['max_step']
+        cfg['TreeEncoder']['num_actions'] = len(seq2action)
+        if cfg["SymQ"]["use_transformer"]:
+            self.tree_encoder = TreeEncoder(cfg["TreeEncoder"]).to(device)
+        else:
+            self.tree_encoder = RNNEncoder(cfg["TreeEncoder"]).to(device)
+        
         self.cfg = cfg["SymQ"]
-        self.dropout = nn.Dropout(0)
+        self.cfg["num_actions"] = len(seq2action)
 
         if self.cfg["batch_norm"]:
             self.batch_norm1 = nn.BatchNorm1d(self.cfg["dim_hidden"])
@@ -35,8 +40,9 @@ class SymQ(nn.Module):
             raise KeyError(
                 f"Unknown embedding fusion method: {self.cfg['embedding_fusion']}"
             )
+
         self.downsample = nn.Linear(
-            int(512 * cfg["SetEncoder"]["num_features"]),
+            int(cfg["SetEncoder"]["dim_hidden"] * cfg["SetEncoder"]["num_features"]),
             cfg["SetEncoder"]["dim_output"],
         )
         self.BN_downsample = nn.BatchNorm1d(cfg["SetEncoder"]["dim_output"])
@@ -74,39 +80,41 @@ class SymQ(nn.Module):
     def _encode_tree(self, x):
         return self.tree_encoder(x)
 
-    def forward(self, point_set, tree, support):
-        # point_set: [batch_size, 2, num_point]
-        # operator: [batch_size, seq_len, num_action]
+    def forward(self, point_set, tree):
+        # point_set: [batch_size, num_var, num_point]
+        # tree: [batch_size, seq_len, num_action]
 
         set_embedding = self._encode_set(point_set)
         set_embedding = self.act_downsample(
             self.BN_downsample(self.downsample(set_embedding))
         )
-        forward_info = set_embedding.clone()
+
         tree_embedding = self._encode_tree(tree)
 
         if self.cfg["embedding_fusion"] == "concat":
-            embeddings = torch.cat((self.dropout(forward_info), tree_embedding), 1)
+            embeddings = torch.cat((set_embedding, tree_embedding), 1)
         elif self.cfg["embedding_fusion"] == "add":
-            embeddings = self.dropout(forward_info) + tree_embedding
+            embeddings = set_embedding + tree_embedding
 
         x = self.linear1(embeddings)
         if self.cfg["batch_norm"]:
             x = self.batch_norm1(x)
         x = self.relu1(x)
+
         x = self.linear2(x)
         if self.cfg["batch_norm"]:
             x = self.batch_norm2(x)
-        fusion = x
         x = self.relu2(x)
-        x = self.relu3(self.linear3(x))
-        if self.cfg["set_skip_connection"]:
-            assert x.shape == forward_info.shape
-            x = x + forward_info
-        x = self.linear4(x)
-        q_values = x
 
-        return q_values, set_embedding, set_embedding, fusion
+        x = self.relu3(self.linear3(x))
+
+        if self.cfg["set_skip_connection"]:
+            assert x.shape == set_embedding.shape
+            x = x + set_embedding
+
+        x = self.linear4(x)
+
+        return x, set_embedding
 
     def act(self, point_set, tree):
         with torch.no_grad():
@@ -115,4 +123,23 @@ class SymQ(nn.Module):
 
 
 if __name__ == "__main__":
-    pass
+    from utils import load_cfg
+    from dataset import HDF5Dataset
+    from torch.utils.data import DataLoader
+
+    cfg = load_cfg("cfg.yaml")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = SymQ(cfg, device).to(device)
+    print(model)
+
+    folder_path = f"{cfg.Dataset.dataset_folder}/{cfg.num_vars}_var/{cfg.Dataset.num_per_eq*cfg.Dataset.num_skeletons}/Train"
+    files = [f"{folder_path}/0_0.h5"]
+    dataset = HDF5Dataset(files, cfg)
+
+    dataloader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=4)
+    batch = next(iter(dataloader))
+
+    model_output = model(batch[0].to(device), batch[1].to(device))
+    print(f"Logits: {model_output[0].shape}")
+    print(f"Set Embedding: {model_output[1].shape}")
+

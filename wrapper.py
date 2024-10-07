@@ -68,6 +68,7 @@ def load_dataset(mode, cfg, debug=False):
     # Return dataset
     return SymDataset(examples, metadata_path, JCL_cfg, cfg)
 
+
 class JCL_Dataset(JCLDataset):
     def __getitem__(self, index):
 
@@ -82,7 +83,7 @@ class JCL_Dataset(JCLDataset):
             chunk = json.loads(chunk)
 
         # if self.mode == "train" or self.mode == "val":
-        traversal = chunk['traversal']
+        traversal = chunk["traversal"]
         eq_id = torch.tensor(self.eq2id[str(traversal)], dtype=torch.long)
         # print(traversal)
         # print(chunk['eq'])
@@ -91,12 +92,14 @@ class JCL_Dataset(JCLDataset):
         Padding_size = max(self.block_size - len(tokenized_expr), 0)
         trg = tokenized_expr + [self.cfg.architecture.trg_pad_idx] * Padding_size
         points = torch.zeros(self.num_Vars + self.num_Ys, self.number_of_points)
-        for idx, xy in enumerate(zip(chunk['X'], chunk['y'])):
+        for idx, xy in enumerate(zip(chunk["X"], chunk["y"])):
             x = xy[0]  # list x
             # x = [(e-minX[eID])/(maxX[eID]-minX[eID]+eps) for eID, e in enumerate(x)] # normalize x
             x = x + [0] * (max(self.num_Vars - len(x), 0))  # padding
 
-            y = [xy[1]] if type(xy[1]) == float or type(xy[1]) == np.float64 else xy[1]  # list y
+            y = (
+                [xy[1]] if type(xy[1]) == float or type(xy[1]) == np.float64 else xy[1]
+            )  # list y
 
             # y = [(e-minY)/(maxY-minY+eps) for e in y]
             y = y + [0] * (max(self.num_Ys - len(y), 0))  # padding
@@ -112,7 +115,7 @@ class JCL_Dataset(JCLDataset):
         #                           posinf=self.threshold[1],
         #                           neginf=self.threshold[0])
         trg = torch.tensor(trg, dtype=torch.long)
-        return points, traversal, eq_id, chunk['eq'], chunk['skeleton']
+        return points, traversal, eq_id, chunk["eq"], chunk["skeleton"]
 
 
 class SymDataset(torch.utils.data.Dataset):
