@@ -13,7 +13,7 @@ training:
   num_workers: 16            # DO NOT increase this while pusing DDP
   no_cuda: False             # disables CUDA training
   resume_path:               # model checkpoint
-  dataset_num: 5             # Number of file data_i.json to load as a dataset
+  dataset_num: 20             # Number of file data_i.json to load as a dataset
   visible_devices: [0,1,2]   # Set here the visible GPUs
 
 logging:

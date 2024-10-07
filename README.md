@@ -46,10 +46,11 @@ Firstly, define the dataset configuration in `NeuralSymbolicRegressionThatScales
 ```
 We use 10 million skeletons as training dataset and 1000 skeletons as validation dataset. Generate the corresponding datasets with following commands:
 ```bash
-python NeuralSymbolicRegressionThatScales/scripts/data_creation/dataset_creation.py --number_of_equations 10000000 --no-debug
-python NeuralSymbolicRegressionThatScales/scripts/data_creation/dataset_creation.py --number_of_equations 1000 --no-debug
+cd NeuralSymbolicRegressionThatScales
+python scripts/data_creation/dataset_creation.py --number_of_equations 10000000 --no-debug
+python scripts/data_creation/dataset_creation.py --number_of_equations 1000 --no-debug
 ```
-Then you will have your raw dataset under `NeuralSymbolicRegressionThatScales/data/raw_datasets/NumberOfEquations`. We will sample 50 different constants to substitute the ones in the skeltons, you can configure the number in `Sym-Q/cfg.yaml`。 Also set the folder path to place your dataset in the `Sym-Q/cfg.yaml`. Run:
+Then you will have your raw dataset under `NeuralSymbolicRegressionThatScales/data/raw_datasets/NumberOfEquations`. We will sample 50 different constants to substitute the ones in the skeltons, you can configure the number in `Sym-Q/cfg.yaml`。 Also set the folder path to place your dataset in the `Sym-Q/cfg.yaml`. The dataset requires approximately 3 TB storage space. Run:
 ```bash
 cd Sym-Q
 ./run_parallel.sh

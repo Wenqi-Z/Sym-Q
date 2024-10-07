@@ -263,12 +263,12 @@ def launch(rank, world_size, cfg, use_cuda):
 
     # Training data
     train_dataset = HDF5Dataset(
-        f"{cfg.Dataset.dataset_folder}/train" , cfg
+        f"{cfg.Dataset.dataset_folder}/{cfg.num_vars}_var/train" , cfg
     )
     if rank == 0:
         print(f"[ > ] Training samples: {len(train_dataset)}")
 
-    val_dataset = HDF5Dataset(f"{cfg.Dataset.dataset_folder}/val", cfg)
+    val_dataset = HDF5Dataset(f"{cfg.Dataset.dataset_folder}/{cfg.num_vars}_var/val", cfg)
     if rank == 0:
         print(f"[ > ] Validation samples: {len(val_dataset)}")
 
