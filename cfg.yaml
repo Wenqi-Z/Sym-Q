@@ -18,7 +18,7 @@ training:
 
 logging:
   log_interval: 5000 # how many batches to wait before logging training status
-  wandb: False
+  wandb: True
   save_model: True
 
 loss:
