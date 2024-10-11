@@ -18,8 +18,8 @@ training:
 
 logging:
   log_interval: 5000 # how many batches to wait before logging training status
-  wandb: True
-  save_model: False
+  wandb: False
+  save_model: True
 
 loss:
   ql: 100 # 100 for mse, 1 for crossentropy

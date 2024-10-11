@@ -203,9 +203,9 @@ def run(
         total_cl_loss = total_cl_loss_tensor.item() / world_size
         total_loss = total_loss_tensor.item() / world_size
 
-        if total_loss < best_loss:
-            # model_save_name = f"{cfg.logging.log_dir}/{mode}_best.pth"
-            # torch.save(model.state_dict(), model_save_name)
+        if total_loss < best_loss and mode == "eval":
+            model_save_name = f"{cfg.logging.log_dir}/{mode}_best.pth"
+            torch.save(model.state_dict(), model_save_name)
             best_loss = total_loss
 
         if mode == "train":
