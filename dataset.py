@@ -23,7 +23,7 @@ class HDF5Dataset(Dataset):
         self.seq2action = get_seq2action(cfg)
 
         if "train" in folder_path:
-            self.hdf5_files = get_h5_files_in_folder(folder_path)[:cfg.training.dataset_num]
+            self.hdf5_files = get_h5_files_in_folder(folder_path)
         elif "val" in folder_path:
             self.hdf5_files = get_h5_files_in_folder(folder_path)
 
@@ -63,8 +63,8 @@ class HDF5Dataset(Dataset):
 
             eq_id = torch.tensor(hf["eq_id"][idx], dtype=torch.long)
             action = torch.tensor(hf["action"][idx], dtype=torch.long)
-            q_values = torch.zeros(len(self.seq2action), dtype=torch.float32)
-            q_values[action] = 1
+            q_values = torch.ones(len(self.seq2action), dtype=torch.float32) * 0.1
+            q_values[action] = 0.9
 
         return points, prefix, eq_id, action, q_values
 

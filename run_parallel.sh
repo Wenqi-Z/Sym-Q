@@ -2,7 +2,7 @@
 
 # Number of parallel jobs
 NUM_JOBS=10
-MAX_BATCH=19 # 9999
+MAX_BATCH=99 # 9999
 
 
 python add_points_to_h5.py --mode val

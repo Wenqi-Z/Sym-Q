@@ -5,29 +5,29 @@ num_points: 100
 training:
   seed: 0
   batch_size: 512
-  epochs: 40
+  epochs: 20
   lr: 0.0001
   use_scaler: False
-  use_mse: False             # MSE loss or CrossEntropy loss
+  use_mse: True             # MSE loss or CrossEntropy loss
   gpus: 3                    # Number of GPUs
   num_workers: 16            # DO NOT increase this while pusing DDP
   no_cuda: False             # disables CUDA training
   resume_path:               # model checkpoint
-  dataset_num: 20             # Number of file data_i.json to load as a dataset
+  dataset_num: 100             # Number of file data_i.json to load as a dataset
   visible_devices: [0,1,2]   # Set here the visible GPUs
 
 logging:
   log_interval: 5000 # how many batches to wait before logging training status
-  wandb: False
+  wandb: True
   save_model: False
 
 loss:
-  ql: 1
+  ql: 100 # 100 for mse, 1 for crossentropy
   cl: 0.5
 
 Dataset:
   batch_size: 1000
-  num_train_skeletons: 10000000
+  num_train_skeletons: 100000
   num_val_skeletons: 1000
   num_per_eq: 50
   dataset_folder: "/backup/wenzhou/Dataset"   # Your Dataset Folder Path

@@ -134,7 +134,7 @@ def run(
 
                 # Compute loss
                 if cfg.training.use_mse:
-                    q_loss = QL(logit, q_values)
+                    q_loss = QL(F.sigmoid(logit), q_values)
                 else:
                     q_loss = QL(logit.view(-1, logit.shape[-1]), next_token.view(-1))
 
@@ -219,7 +219,7 @@ def run(
         if mode == "eval":
             loss_dict = {
                 "val_loss": total_loss,
-                "val_ce_loss": total_q_loss,
+                "val_q_loss": total_q_loss,
                 "val_cl_loss": total_cl_loss,
                 "val_step_acc": accuracy,
             }
