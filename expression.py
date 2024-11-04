@@ -1,33 +1,21 @@
-from abc import ABC, abstractmethod
-import random
-import warnings
+from abc import ABC
 
 import torch
-import numpy as np
-import sympy as sp
-from sympy import lambdify, sympify
-
-from bfgs import bfgs
-import signal
-
-# def handle_timeout(signum, frame):
-#     raise TimeoutError
-
-# signal.signal(signal.SIGALRM, handle_timeout)
 
 # Module-level constants
 PLACEHOLDER = "PH"
 OPT_SEQ = {
     "x_1": "x_1",
     "x_2": "x_2",
+    "x_3": "x_3",
     "c": "c",
-    "Abs": "abs",
+    "abs": "abs",
     "+": "add",
     "*": "mul",
     "/": "div",
     "sqrt": "sqrt",
     "exp": "exp",
-    "log": "log",
+    "ln": "ln",
     "**": "pow",
     "sin": "sin",
     "cos": "cos",
@@ -49,6 +37,7 @@ OPT_SEQ = {
     "4": "4",
     "5": "5",
 }
+OPT_MAP = {v: k for k, v in OPT_SEQ.items()}
 
 
 class Node:
@@ -59,7 +48,8 @@ class Node:
         "exp",
         "sqrt",
         "log",
-        "Abs",
+        "ln",
+        "abs",
         "asin",
         "acos",
         "atan",
@@ -95,7 +85,7 @@ class Node:
         """
         assert isinstance(val, str), "Node value must be a string."
 
-        self.val = val
+        self.val = OPT_MAP[val]
 
         if self.binary is False:
             self.child = Node(self)
@@ -123,8 +113,7 @@ class TargetExpression(Expression):
         """
         Initialize the Expression with a default value or an existing expression.
         """
-        assert point_set.shape[2] == 3, "Point set must be 3D."
-        self._point_set = point_set  # 1 x N x 3
+        self._point_set = point_set
         self._expr = expr
         self._skeleton = skeleton
         self._opt_sequence = opt_sequence
@@ -147,22 +136,13 @@ class TargetExpression(Expression):
 
 
 class AgentExpression(Expression):
-    def __init__(self, point_set: torch.FloatTensor):
+    def __init__(self):
         """
         Initialize the Expression with a default value or an existing expression.
         """
-        # Initialize the expression
         self.tree = Node()
-        self._expr = None
-        # reference point set
-        assert point_set.shape[2] == 3, "Point set must be 3D."
-        self._ref_point_set = point_set  # 1 x N x 3
-        self._point_set = None
-        # record the history of agent operations
         self._opt_sequence = []
-        # used to get the nodes to work on for current operation
         self._to_be_expanded = [self.tree]
-        self.expr = None
 
     @property
     def skeleton(self) -> str:
@@ -192,7 +172,7 @@ class AgentExpression(Expression):
         self._to_be_expanded.extend(h_list)
 
         # Add the operation to the history
-        self._opt_sequence.append(OPT_SEQ[opt])
+        self._opt_sequence.append(opt)
 
         return 0 if self._to_be_expanded else 1
 
@@ -206,4 +186,15 @@ class AgentExpression(Expression):
 
 
 if __name__ == "__main__":
-    pass
+    expr = AgentExpression()
+    print(expr.skeleton)
+    print(expr.add_opt("sin"))
+    print(expr.skeleton)
+    print(expr.add_opt("sin"))
+    print(expr.skeleton)
+    print(expr.add_opt("add"))
+    print(expr.skeleton)
+    print(expr.add_opt("x_1"))
+    print(expr.skeleton)
+    print(expr.add_opt("x_2"))
+    print(expr.skeleton)

@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 
 from SymQ import SymQ
-from utils import fix_seed
+from util import fix_seed
 from agent import DQNAgent
 from wrapper import load_dataset
 from symbolic_world import SymbolicWorldEnv

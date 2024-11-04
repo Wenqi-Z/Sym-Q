@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from utils import get_seq2action
+from util import get_seq2action
 from encoder import SetEncoder, TreeEncoder, RNNEncoder
 
 
@@ -11,17 +11,20 @@ class SymQ(nn.Module):
         super(SymQ, self).__init__()
         self.device = device
 
-        cfg['SetEncoder']['dim_input'] = cfg['num_vars'] + 1
+        if cfg["num_vars"] == 2 and cfg["SymQ"]["use_pretrain"]:
+            cfg["SetEncoder"]["dim_input"] = 4
+        else:
+            cfg["SetEncoder"]["dim_input"] = cfg["num_vars"] + 1
         self.set_encoder = SetEncoder(cfg["SetEncoder"]).to(device)
 
         seq2action = get_seq2action(cfg)
-        cfg['TreeEncoder']['max_step'] = cfg['max_step']
-        cfg['TreeEncoder']['num_actions'] = len(seq2action)
+        cfg["TreeEncoder"]["max_step"] = cfg["max_step"]
+        cfg["TreeEncoder"]["num_actions"] = len(seq2action)
         if cfg["SymQ"]["use_transformer"]:
             self.tree_encoder = TreeEncoder(cfg["TreeEncoder"]).to(device)
         else:
             self.tree_encoder = RNNEncoder(cfg["TreeEncoder"]).to(device)
-        
+
         self.cfg = cfg["SymQ"]
         self.cfg["num_actions"] = len(seq2action)
 
@@ -83,7 +86,6 @@ class SymQ(nn.Module):
     def forward(self, point_set, tree):
         # point_set: [batch_size, num_var, num_point]
         # tree: [batch_size, seq_len, num_action]
-
         set_embedding = self._encode_set(point_set)
         set_embedding = self.act_downsample(
             self.BN_downsample(self.downsample(set_embedding))
@@ -116,14 +118,18 @@ class SymQ(nn.Module):
 
         return x, set_embedding
 
-    def act(self, point_set, tree):
+    def act(self, point_set, tree, mask=None):
         with torch.no_grad():
-            q_values, _, _, _ = self.forward(point_set, tree, point_set)
+            q_values, _ = self.forward(point_set, tree)
+
+        if mask is not None:
+            q_values = torch.where(mask == 1, q_values, -1e9)
+
         return q_values.argmax(dim=-1), q_values
 
 
 if __name__ == "__main__":
-    from utils import load_cfg
+    from util import load_cfg
     from dataset import HDF5Dataset
     from torch.utils.data import DataLoader
 
@@ -132,9 +138,8 @@ if __name__ == "__main__":
     model = SymQ(cfg, device).to(device)
     print(model)
 
-    folder_path = f"{cfg.Dataset.dataset_folder}/{cfg.num_vars}_var/{cfg.Dataset.num_per_eq*cfg.Dataset.num_skeletons}/Train"
-    files = [f"{folder_path}/0_0.h5"]
-    dataset = HDF5Dataset(files, cfg)
+    folder_path = f"{cfg.Dataset.dataset_folder}/{cfg.num_vars}_var/train"
+    dataset = HDF5Dataset(folder_path, cfg)
 
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=4)
     batch = next(iter(dataloader))
@@ -142,4 +147,3 @@ if __name__ == "__main__":
     model_output = model(batch[0].to(device), batch[1].to(device))
     print(f"Logits: {model_output[0].shape}")
     print(f"Set Embedding: {model_output[1].shape}")
-

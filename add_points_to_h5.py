@@ -19,7 +19,12 @@ from torch.distributions.uniform import Uniform
 from nesymres.utils import load_eq, load_metadata_hdf5
 from nesymres.dataset.generator import Generator, UnknownSymPyOperator
 
-from utils import handle_timeout, load_cfg, get_seq2action
+from util import (
+    handle_timeout,
+    load_cfg,
+    get_seq2action,
+    generateDataFast,
+)
 
 
 def constants_to_placeholder(s, symbol="c"):
@@ -56,57 +61,6 @@ def sample_symbolic_constants_from_coeff_dict(coeff_dict, cfg=None):
     else:
         consts = dummy_consts
     return consts, dummy_consts
-
-
-def filter_valid_points(X, Y):
-    valid_indices = (
-        np.isfinite(Y) & (~np.iscomplex(Y)) & (~np.isnan(Y)) & (abs(Y) < 5e4)
-    )
-    X_valid = X[:, valid_indices]
-    Y_valid = Y[valid_indices]
-    return X_valid, Y_valid
-
-
-def generateDataFast(
-    eq, n_points, n_vars, decimals, min_x, max_x
-):
-    total_variables = [f"x_{i}" for i in range(1, n_vars + 1)]
-    symbols = sympy.symbols(total_variables)
-    expr = sympy.sympify(eq)
-    lambdified_expr = sympy.lambdify(symbols, expr, "numpy")
-
-    initial_n_points = n_points * 30  # Generate 30 times more points initially
-    X = np.round(
-        np.random.uniform(min_x, max_x, (n_vars, initial_n_points)),
-        decimals=decimals,
-    )
-
-    # Set the values of variables that are not present in the expression to zero
-    for i in range(n_vars):
-        if total_variables[i] not in eq:
-            X[i, :] = 0.0
-
-    # Evaluate the expression for all generated values
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=RuntimeWarning)
-        Y = lambdified_expr(*X)
-
-    if isinstance(Y, float) or isinstance(Y, int):
-        return None
-
-    # Filter out invalid values (NaN, Inf, or complex numbers)
-    X_valid, Y_valid = filter_valid_points(X, Y)
-
-    # Check if the number of valid points is less than the required number
-    num_valid_points = len(Y_valid)
-    if num_valid_points < n_points:
-        return None
-    else:
-        # Select the required subset of valid points
-        X = X_valid[:, :n_points]
-        Y = Y_valid[:n_points]
-
-    return np.vstack([X, np.expand_dims(Y, axis=0)])
 
 
 def process_equation(eq, keys, eq_id, constants_cfg):
@@ -173,7 +127,7 @@ def process_equation(eq, keys, eq_id, constants_cfg):
         if any(val not in keys for val in traversal):
             return None
 
-        points = generateDataFast(
+        X, y = generateDataFast(
             eq_infix,
             n_points=num_points,
             n_vars=num_vars,
@@ -182,8 +136,10 @@ def process_equation(eq, keys, eq_id, constants_cfg):
             max_x=10,
         )
 
-        if points is None:
+        if X is None:
             return None
+
+        points = np.concatenate((X, y.reshape(-1, 1)), axis=1).T
 
         structure = {
             "points": points.tolist(),
@@ -234,7 +190,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch", type=int, default=0)
     parser.add_argument("--mode", type=str, default="train")
+    parser.add_argument("--n_var", type=int, default=3)
     args = parser.parse_args()
+
+    if args.n_var not in [2, 3]:
+        print(f"Number of variables must be 2 or 3, got {args.n_var}")
+        exit()
 
     mode = args.mode
     if mode not in ["train", "val"]:
@@ -242,11 +203,15 @@ if __name__ == "__main__":
         exit()
 
     # Load config
-    cfg = load_cfg('cfg.yaml')
+    cfg = load_cfg(f"cfg_{args.n_var}var.yaml")
     num_points = cfg.num_points
     batch_size = cfg.Dataset.batch_size
     num_vars = cfg.num_vars
-    num_skeletons = cfg.Dataset.num_train_skeletons if mode == "train" else cfg.Dataset.num_val_skeletons
+    num_skeletons = (
+        cfg.Dataset.num_train_skeletons
+        if mode == "train"
+        else cfg.Dataset.num_val_skeletons
+    )
     num_per_eq = cfg.Dataset.num_per_eq
     batch_ub = num_skeletons // batch_size
 
@@ -279,7 +244,7 @@ if __name__ == "__main__":
 
         del eq, results
 
-        if (eq_id+1) % 100 == 0:
+        if (eq_id + 1) % 100 == 0:
 
             points_list = []
             prefix_list = []
@@ -293,10 +258,10 @@ if __name__ == "__main__":
                 if structure is None:
                     continue
 
-                points = structure['points']
+                points = structure["points"]
                 points_list.append(np.expand_dims(points, axis=0))
 
-                traversal = structure['traversal']
+                traversal = structure["traversal"]
 
                 for step_id in range(len(traversal)):
 
@@ -308,17 +273,17 @@ if __name__ == "__main__":
 
                     prefix_list.append(prefix_array)
                     action_list.append(action)
-                    eq_list.append(structure['eq_id'])
+                    eq_list.append(structure["eq_id"])
                     map_list.append(map_idx)
 
                 map_idx += 1
 
-            with h5py.File(f'{folder}/{args.batch}_{file_ID}.h5', 'w') as hf:
-                hf.create_dataset('points', data=np.vstack(points_list))
-                hf.create_dataset('prefix', data=np.vstack(prefix_list))
-                hf.create_dataset('eq_id', data=np.array(eq_list))
-                hf.create_dataset('action', data=np.array(action_list))
-                hf.create_dataset('map', data=np.array(map_list))
+            with h5py.File(f"{folder}/{args.batch}_{file_ID}.h5", "w") as hf:
+                hf.create_dataset("points", data=np.vstack(points_list))
+                hf.create_dataset("prefix", data=np.vstack(prefix_list))
+                hf.create_dataset("eq_id", data=np.array(eq_list))
+                hf.create_dataset("action", data=np.array(action_list))
+                hf.create_dataset("map", data=np.array(map_list))
 
             _results.clear()
 

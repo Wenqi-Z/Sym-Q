@@ -4,7 +4,7 @@ import torch
 from torch.utils.data import Dataset
 import numpy as np
 from tqdm import tqdm
-from utils import seq_to_tree, get_seq2action
+from util import seq_to_tree, get_seq2action
 
 
 def get_h5_files_in_folder(folder_path):
@@ -57,6 +57,11 @@ class HDF5Dataset(Dataset):
             points_idx = hf["map"][idx]
             points = torch.tensor(hf["points"][points_idx], dtype=torch.float32)
 
+            # Padding for x_3 if 2 var version using pretrain
+            if self.cfg["num_vars"] == 2 and self.cfg["SymQ"]["use_pretrain"]:
+                zeros = torch.zeros(1, points.shape[-1], dtype=torch.float32)
+                points = torch.cat((points[:-1, :], zeros, points[-1:, :]), dim=0)
+
             prefix = hf["prefix"][idx]
             prefix = [int(p) for p in prefix if not np.isnan(p)]
             prefix = seq_to_tree(prefix, self.cfg)
@@ -70,28 +75,14 @@ class HDF5Dataset(Dataset):
 
 
 if __name__ == "__main__":
-    from utils import load_cfg
-    cfg = load_cfg("cfg.yaml")
+    from util import load_cfg
+    from torch.utils.data import DataLoader
 
-    folder_path = f"{cfg.Dataset.dataset_folder}/{cfg.num_vars}_var/train"
+    cfg = load_cfg("cfg_2var.yaml")
+
+    folder_path = f"{cfg.Dataset.dataset_folder}/{cfg.num_vars}_var/val"
     dataset = HDF5Dataset(folder_path, cfg)
 
-    # for i in range(1000):
-    #     sample = dataset[i]
-    #     points = sample[0]
-    #     prefix = sample[1]
-    #     eq_id = sample[2]
-    #     action = sample[3]
-    #     q_values = sample[4]
-    #     print(f"Points: {points[:, :10]}")
-    #     print(f"Prefix: {prefix}")
-    #     print(f"Eq ID: {eq_id}")
-    #     print(f"Next Action: {action}")
-    #     print(f"Q Values: {q_values}")
-    #     input("Press Enter to continue...")
-
-
-    from torch.utils.data import DataLoader
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=4)
     batch = next(iter(dataloader))
     print(f"Points: {batch[0].shape}")
@@ -99,4 +90,3 @@ if __name__ == "__main__":
     print(f"Eq ID: {batch[2].shape}")
     print(f"Next Action: {batch[3].shape}")
     print(f"Q Values: {batch[4].shape}")
-
