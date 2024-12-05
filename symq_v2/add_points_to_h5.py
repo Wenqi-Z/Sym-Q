@@ -72,19 +72,12 @@ def process_equation(eq, keys, eq_id, constants_cfg):
     try:
         eq_no_consts = eq.expr
         consts_elemns = eq.coeff_dict
-        # print(f"eq: {eq}")
-        # print(f"eq_no_consts: {eq_no_consts}")
-        # print(f"consts_elemns: {consts_elemns}")
 
         w_const, wout_consts = sample_symbolic_constants_from_coeff_dict(
             consts_elemns, constants_cfg
         )
         eq_string = eq_no_consts.format(**w_const)
         eq_infix = str(sympy.sympify(eq_string)).replace(" ", "")
-        # print(f"w_const: {w_const}")
-        # print(f"wout_consts: {wout_consts}")
-        # print(f"eq_string: {eq_string}")
-        # print(f"eq_infix: {eq_infix}")
 
         if (
             "zoo" in eq_infix
@@ -96,13 +89,11 @@ def process_equation(eq, keys, eq_id, constants_cfg):
             return None
 
         exps = re.findall(r"(\*\*[0-9\.]+)", eq_infix)
-        # print(f"exps: {exps}")
         for ex in exps:
             cexp = "**" + str(
                 eval(ex[2:]) if eval(ex[2:]) < 6 else np.random.randint(2, 6)
             )
             eq_infix = eq_infix.replace(ex, cexp)
-        # print(f"eq_infix: {eq_infix}")
 
         try:
             eq_sympy_infix = constants_to_placeholder(eq_infix)
@@ -119,10 +110,6 @@ def process_equation(eq, keys, eq_id, constants_cfg):
                 exps,
             )
             return None
-
-        # print(f"eq_sympy_infix: {eq_sympy_infix}")
-        # print(f"eq_skeleton: {eq_skeleton}")
-        # print(f"traversal: {traversal}")
 
         if any(val not in keys for val in traversal):
             return None
@@ -219,7 +206,7 @@ if __name__ == "__main__":
         print(f"Batch number must be between 0 and {batch_ub - 1}")
         exit()
 
-    raw_data_folder = "../NeuralSymbolicRegressionThatScales/data/raw_datasets"
+    raw_data_folder = "../../NeuralSymbolicRegressionThatScales/data/raw_datasets"
     dataset_path = f"{raw_data_folder}/{num_skeletons}"
     metadata = load_metadata_hdf5(hydra.utils.to_absolute_path(dataset_path))
 

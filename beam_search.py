@@ -1,192 +1,411 @@
 import torch
 import torch.nn.functional as F
-from joblib import Parallel, delayed
-import copy
-from typing import List, Dict, Any
-from env import SymbolicWorldEnv
 
 
-def beam_search(model, cfg, X, y, mask, beam_size, n_jobs=1, penalize_length=True):
-    """
-    Performs beam search using deep copies of the environment to avoid replaying action sequences.
+def beam_search(model, env, point_set, expr, beam_size=128):
+    raw_point_set = point_set
+    max_step = model.cfg["num_actions"]
+    obs, info = env.reset(raw_point_set, expr)
 
-    Args:
-        model: The model used to predict actions.
-        cfg: Configuration object containing necessary parameters.
-        X: Input features.
-        y: Target values.
-        mask: Mask tensor for the model.
-        beam_size: The beam size for beam search.
-        n_jobs: Number of parallel jobs.
+    point_set = obs["point_set"]
+    tree = obs["tree"]
 
-    Returns:
-        A list of completed candidates sorted by their cumulative scores.
-    """
-    max_step = cfg["max_step"]
-    device = model.device
+    _, q_values = model.act(point_set, tree)
 
-    # Initialize tensors directly on the target device
-    X_tensor = torch.zeros(
-        (X.shape[0], cfg.num_vars), device=device, dtype=torch.float32
-    )
-    X_tensor[:, : X.shape[1]] = torch.as_tensor(X, device=device, dtype=torch.float32)
-    y_tensor = torch.as_tensor(y, device=device, dtype=torch.float32)
-    raw_point_set = torch.cat((X_tensor, y_tensor.unsqueeze(1)), dim=1).unsqueeze(0)
-    raw_point_set = raw_point_set.permute(0, 2, 1)
-
-    # Calculate the number of non-zero variables
-    n_x = (X_tensor != 0).any(dim=0).sum().item()
-    required_vars = {f"x_{i}" for i in range(1, n_x + 1)}
-
-    # Initialize the initial environment
-    initial_env = SymbolicWorldEnv(cfg)
-    n_actions = initial_env.action_space.n
-    initial_env.reset()
-    tree = torch.as_tensor(initial_env.tree, device=device, dtype=torch.float32)
-
-    # Get initial action scores and select top-k actions
-    _, q_values = model.act(raw_point_set, tree, mask)
-    log_probs = F.log_softmax(q_values, dim=-1)
     topk_vals, topk_indices = torch.topk(
-        log_probs, max_step, dim=-1
-    )  # Shape: [batch, max_step]
+        F.log_softmax(q_values, dim=-1), max_step, dim=-1
+    )
 
-    # Containers for candidates and completed sequences
-    candidates: List[Dict[str, Any]] = []
-    done_candidates: List[Dict[str, Any]] = []
+    # Beam container
+    candidates = []
+    done_candidates = []
 
-    # Helper function to step each beam candidate
-    def step_candidate(action, value, env_instance):
-        """
-        Initializes a candidate by applying an action to the environment.
+    # Fill containers with all actions on STEP 1
+    for idx, action in enumerate(topk_indices[0]):
+        env.reset(raw_point_set, expr)
 
-        Args:
-            action: The action to apply.
-            value: The log probability of the action.
-            env_instance: An instance of SymbolicWorldEnv.
-
-        Returns:
-            A dictionary representing the candidate or None if invalid.
-        """
-        local_env = copy.deepcopy(env_instance)
-        _, _, done, _, info = local_env.step(action.item())
+        action_sequence = []
+        obs, _, done, _, info = env.step(action.item())
+        action_sequence.append(action.item())
 
         if not done:
-            return {
-                "cumulative_score": value.item(),
-                "env": local_env,
-            }
-        else:
-            if info["terminated"] == "time_out":
-                return None
-
-            skeleton = info["agent_expr"].skeleton
-
-            # Validate skeleton
-            if not all([var in skeleton for var in required_vars]):
-                return None
-
-            return {
-                "cumulative_score": (
-                    value.item()
-                    if penalize_length
-                    else value.item() / (local_env.n_step) ** 0.9
-                ),
-                "skeleton": skeleton,
-            }
-
-    # Initialize candidates in parallel
-    env_init_results = Parallel(n_jobs=n_jobs, backend="threading")(
-        delayed(step_candidate)(topk_indices[0, idx], topk_vals[0, idx], initial_env)
-        for idx in range(topk_indices.size(1))
-    )
-
-    for res in env_init_results:
-        if res is None:
-            continue
-        if "skeleton" in res:
-            done_candidates.append(res)
-        else:
-            candidates.append(res)
-
-    # Beam search iterations
-    for _ in range(1, max_step):
-        if not candidates:
-            break  # No more candidates to expand
-
-        # Prepare batched inputs for the model
-        # Assuming each environment has 'point_set' and 'tree' attributes
-        batched_point_set = torch.cat([raw_point_set for _ in candidates], dim=0)
-        batched_tree = torch.cat(
-            [
-                torch.as_tensor(
-                    candidate["env"].tree, device=device, dtype=torch.float32
-                )
-                for candidate in candidates
-            ],
-            dim=0,
-        )
-
-        # Get model predictions
-        _, q_values = model.act(batched_point_set, batched_tree, mask)
-        log_probs = F.log_softmax(q_values, dim=-1)
-
-        # Get cumulative scores
-        pre_scores = (
-            torch.tensor(
-                [candidate["cumulative_score"] for candidate in candidates],
-                device=device,
+            candidates.append(
+                {
+                    "sequence": action_sequence,
+                    "cumulative_score": topk_vals[0][idx],
+                    "score": topk_vals[0][idx],
+                    "tree": obs["tree"],
+                }
             )
-            .unsqueeze(1)
-            .expand(-1, n_actions)
-        )
-
-        # Combine scores
-        combined_scores = log_probs + pre_scores  # Shape: [batch_size, n_actions]
-
-        # Flatten and get top-k
-        flattened_scores = combined_scores.view(-1)
-        num_topk = min(beam_size * 2, flattened_scores.size(0))
-        top_values, top_indices = torch.topk(flattened_scores, num_topk)
-
-        # Decode indices to candidate and action indices
-        candidate_indices = top_indices // n_actions
-        action_indices = top_indices % n_actions
-
-        # Prepare tasks for parallel execution
-        expand_tasks = [
-            (
-                action_indices[idx],
-                top_values[idx],
-                candidates[candidate_indices[idx].item()]["env"],
+        else:
+            done_candidates.append(
+                {
+                    "sequence": action_sequence,
+                    "cumulative_score": topk_vals[0][idx],
+                    "score": topk_vals[0][idx],
+                    "skeleton": info["agent_expr"].skeleton,
+                    "opt_seq": info["agent_expr"].opt_sequence,
+                    "R2": info["R2"],
+                }
             )
-            for idx in range(top_indices.numel())
-        ]
 
-        # Expand candidates in parallel
-        expand_results = Parallel(n_jobs=n_jobs, backend="threading")(
-            delayed(step_candidate)(action_idx, value, env_instance)
-            for action_idx, value, env_instance in expand_tasks
+    # Beam search after first action
+    for _ in range(max_step - 1):
+        # Exit if there are no more candidates
+        if len(candidates) == 0:
+            break
+
+        trees = [candidate["tree"].squeeze(0) for candidate in candidates]
+        trees = torch.stack(trees, dim=0)
+
+        pre_scores = [candidate["cumulative_score"] for candidate in candidates]
+        pre_scores = torch.stack(pre_scores, dim=0).unsqueeze(1)
+        pre_scores = pre_scores.repeat(1, max_step)
+
+        point_sets = point_set.repeat(len(candidates), 1, 1)
+
+        _, q_values = model.act(point_sets, trees)
+        probs = F.log_softmax(q_values, dim=-1) + pre_scores
+
+        flattened_probs = probs.view(-1)
+        top_values, top_indices = torch.topk(
+            flattened_probs, min(beam_size * 2, len(candidates) * max_step)
         )
 
+        # New candidates
         new_candidates = []
-        for res in expand_results:
-            if res is None:
-                continue
-            if "skeleton" in res:
-                done_candidates.append(res)
+
+        for idx in range(top_indices.shape[0]):
+            # Determine the original beam index and word index from flattened index
+            beam_idx = top_indices[idx] // max_step
+            opt_idx = top_indices[idx] % max_step
+
+            # Copy old candidate
+            old_candidate = candidates[beam_idx]
+
+            # Check if the action leads to termination
+            env.reset(raw_point_set, expr)
+
+            for action in old_candidate["sequence"]:
+                obs, _, done, _, info = env.step(action)
+
+            # Apply operation and go to next step
+            obs, _, done, _, info = env.step(opt_idx.item())
+
+            action_sequence = old_candidate["sequence"].copy()
+            action_sequence.append(opt_idx.item())
+
+            if not done:
+                new_candidates.append(
+                    {
+                        "sequence": action_sequence,
+                        "cumulative_score": top_values[idx],
+                        "score": top_values[idx],
+                        "tree": obs["tree"],
+                    }
+                )
             else:
-                new_candidates.append(res)
+                score = top_values[idx] / len(action_sequence)
+                if not np.isinf(score.cpu().item()):
+                    done_candidates.append(
+                        {
+                            "sequence": action_sequence,
+                            "cumulative_score": top_values[idx] / len(action_sequence),
+                            "score": top_values[idx],
+                            "skeleton": info["agent_expr"].skeleton,
+                            "opt_seq": info["agent_expr"].opt_sequence,
+                            "R2": info["R2"],
+                        }
+                    )
 
-        # Trim the done_candidates to maintain beam size
-        if len(done_candidates) > beam_size:
-            done_candidates.sort(key=lambda x: x["cumulative_score"], reverse=True)
-            done_candidates = done_candidates[:beam_size]
+                if len(done_candidates) > beam_size:
+                    # sort according to cumulative_score
+                    done_candidates.sort(
+                        key=lambda x: x["cumulative_score"], reverse=True
+                    )
+                    done_candidates = done_candidates[:beam_size]
 
-        # Update candidates for the next step
         candidates = new_candidates
 
-    # Final sorting of completed candidates
     done_candidates.sort(key=lambda x: x["cumulative_score"], reverse=True)
 
     return done_candidates
+
+
+if __name__ == "__main__":
+    import os
+    import gc
+    import ast
+    import yaml
+    import json
+    import signal
+    import argparse
+
+    import warnings
+
+    warnings.filterwarnings("ignore", category=UserWarning)
+
+    from tqdm import tqdm
+    import numpy as np
+    import sympy as sp
+
+    from bfgs import bfgs
+    from SymQ import SymQ
+    from utils import BENCHMARK, fix_seed, handle_timeout
+    from wrapper import load_dataset
+    from symbolic_world import SymbolicWorldEnv
+
+    import sys
+    from pathlib import Path
+
+    sys.path.append(str(Path(__file__).parent.parent))
+    sys.path.append(
+        str(Path(__file__).parent.parent) + "/Joint_Supervised_Learning_for_SR/"
+    )
+    from Joint_Supervised_Learning_for_SR.src.utils import generateDataFast
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--weights_path", type=str, default="")
+    parser.add_argument("--gpu_id", type=str, default="0", help="gpu id")
+    parser.add_argument("--target", type=str, default="", help="dataset")
+    args = parser.parse_args()
+
+    folder_path = os.path.dirname(args.weights_path)
+
+    # Load config file
+    cfg = yaml.load(open("cfg.yaml", "r"), Loader=yaml.FullLoader)
+
+    # Initialize model and optimizer
+    device = torch.device(f"cuda:{args.gpu_id}" if torch.cuda.is_available() else "cpu")
+    model = SymQ(cfg, device).to(device)
+    model.load_state_dict(torch.load(args.weights_path))
+    model.eval()
+    print(f"SymQ running on {device}")
+
+    # SSDNC recovery
+    if args.target == "ssdnc_seq_recovery":
+        SSDNC_dataset = load_dataset("SSDNC", cfg)
+        num_tests = len(SSDNC_dataset)
+        env = SymbolicWorldEnv(cfg, cal_r2=False)
+        record = {}
+
+        for eq_num in tqdm(range(num_tests)):
+            gc.collect()
+            point_set, _, _, _, _, skeleton, seq, expr = SSDNC_dataset[eq_num]
+            point_set = point_set.to(device).unsqueeze(0).transpose(1, 2)
+
+            seq = ast.literal_eval(seq)
+            done_candidates = beam_search(model, env, point_set, expr)
+
+            rank = -1
+            recovered = False
+
+            for r, candidate in enumerate(done_candidates):
+                if seq == candidate["opt_seq"] and rank == -1:
+                    rank = r
+                    recovered = True
+                    break
+
+            record[eq_num] = {
+                "rank": rank,
+                "recovered": recovered,
+            }
+
+            with open(f"{folder_path}/beam_search_SSDNC_recovery.json", "w") as f:
+                json.dump(record, f, indent=5)
+
+    # Benchmark
+    if args.target == "benchmark":
+        signal.signal(signal.SIGALRM, handle_timeout)
+        env = SymbolicWorldEnv(cfg, cal_r2=False)
+
+        for benchmark in ["Nguyen", "Keijzer", "Constant", "R", "Feynman"]:
+            print(f"Evaluating {benchmark}...")
+            record = {}
+
+            for eq_name, expr in tqdm(BENCHMARK.items()):
+                signal.alarm(0)
+                if benchmark not in eq_name:
+                    continue
+                gc.collect()
+                fix_seed(0)
+                x, y = generateDataFast(
+                    expr, 100, 2, 8, -10, 10, total_variabels=["x_1", "x_2"]
+                )
+                x = torch.tensor(x, dtype=torch.float32)
+                y = torch.tensor(y, dtype=torch.float32)
+                point_set = (
+                    torch.concat((x, y.unsqueeze(1)), dim=1).to(device).unsqueeze(0)
+                )
+
+                done_candidates = beam_search(model, env, point_set, expr)
+                valid_candidates = []
+
+                for candidate in done_candidates:
+
+                    try:
+                        # Set the signal handler for the SIGALRM signal
+                        signal.alarm(20)
+
+                        candidate_expr, _, mse, _, _ = bfgs(
+                            candidate["skeleton"], x.unsqueeze(0), y
+                        )
+
+                        if np.isnan(mse) or np.isinf(mse):
+                            continue
+
+                        candidate["mse"] = mse
+                        candidate["expression"] = candidate_expr
+
+                        agent_expr = str(candidate_expr)
+
+                        total_variables = ["x_1", "x_2"]
+                        X_dict = {
+                            x_: x[:, idx].cpu()
+                            for idx, x_ in enumerate(total_variables)
+                        }
+                        y_pred = sp.lambdify(
+                            ",".join(total_variables), sp.sympify(agent_expr)
+                        )(**X_dict)
+
+                        r2 = (
+                            1
+                            - torch.sum(torch.square(y - y_pred))
+                            / torch.sum(torch.square(y - torch.mean(y)))
+                        ).item()
+
+                        if isinstance(r2, float) or isinstance(r2, int):
+                            candidate["R2"] = r2
+                        else:
+                            continue
+
+                        valid_candidates.append(candidate)
+
+                        signal.alarm(0)
+
+                    except Exception as e:
+                        signal.alarm(0)
+                        print(f"Exception encountered: {e}")
+
+                best_candidate = max(valid_candidates, key=lambda x: x["R2"])
+
+                log_cans = [
+                    {
+                        "mse": float(can["mse"]),
+                        "expression": str(can["expression"]),
+                        "r2": can["R2"],
+                        "skeleton": can["skeleton"],
+                    }
+                    for can in valid_candidates
+                ]
+
+                record[eq_name] = {
+                    "R2": best_candidate["R2"],
+                    "equation": expr,
+                    "agent_skeleton": best_candidate["skeleton"],
+                    "agent_expression": str(best_candidate["expression"]),
+                    "candidates": log_cans,
+                }
+
+                with open(
+                    f"{folder_path}/beam_search_benchmark_{benchmark}.json", "w"
+                ) as f:
+                    json.dump(record, f, indent=5)
+
+    if args.target == "ssdnc_r2":
+        signal.signal(signal.SIGALRM, handle_timeout)
+
+        SSDNC_dataset = load_dataset("SSDNC", cfg)
+        num_tests = len(SSDNC_dataset)
+        env = SymbolicWorldEnv(cfg, cal_r2=False)
+        record = {}
+
+        for eq_num in tqdm(range(num_tests)):
+            signal.alarm(0)
+            gc.collect()
+            fix_seed(0)
+
+            point_set, _, _, _, _, skeleton, seq, expr = SSDNC_dataset[eq_num]
+            point_set = point_set.to(device).unsqueeze(0).transpose(1, 2)
+            x = point_set[0, :, :2].cpu()
+            y = point_set[0, :, -1].cpu()
+
+            try:
+                done_candidates = beam_search(model, env, point_set, expr)
+            except Exception as e:
+                record[eq_num] = {
+                    "error": str(e),
+                }
+                with open(f"{folder_path}/beam_search_SSDNC_R2.json", "w") as f:
+                    json.dump(record, f, indent=4)
+                continue
+
+            valid_candidates = []
+
+            for candidate in done_candidates:
+                if "PH" in candidate["skeleton"]:
+                    continue
+                try:
+                    signal.alarm(120)
+
+                    candidate_expr, _, mse, _, _ = bfgs(
+                        candidate["skeleton"], x.unsqueeze(0), y
+                    )
+
+                    if np.isnan(mse) or np.isinf(mse):
+                        continue
+
+                    candidate["mse"] = mse
+                    candidate["expression"] = candidate_expr
+
+                    agent_expr = str(candidate_expr)
+
+                    total_variables = ["x_1", "x_2"]
+                    X_dict = {
+                        x_: x[:, idx].cpu() for idx, x_ in enumerate(total_variables)
+                    }
+                    y_pred = sp.lambdify(
+                        ",".join(total_variables), sp.sympify(agent_expr)
+                    )(**X_dict)
+
+                    r2 = (
+                        1
+                        - torch.sum(torch.square(y - y_pred))
+                        / torch.sum(torch.square(y - torch.mean(y)))
+                    ).item()
+
+                    if isinstance(r2, float) or isinstance(r2, int):
+                        candidate["R2"] = r2
+                    else:
+                        continue
+
+                    valid_candidates.append(candidate)
+                    signal.alarm(0)
+
+                except Exception as e:
+                    signal.alarm(0)
+                    print(f"Exception encountered: {e}")
+                    continue
+
+            best_candidate = max(valid_candidates, key=lambda x: x["R2"])
+
+            log_cans = [
+                {
+                    "mse": float(can["mse"]),
+                    "expression": str(can["expression"]),
+                    "r2": can["R2"],
+                    "skeleton": can["skeleton"],
+                }
+                for can in valid_candidates
+            ]
+
+            record[eq_num] = {
+                "R2": best_candidate["R2"],
+                "equation": expr,
+                "skeleton": best_candidate["skeleton"],
+                "expression": str(best_candidate["expression"]),
+                "candidates": log_cans,
+            }
+
+            with open(f"{folder_path}/beam_search_SSDNC_R2.json", "w") as f:
+                json.dump(record, f, indent=4)

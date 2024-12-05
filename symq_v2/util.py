@@ -350,14 +350,13 @@ def parse_equation(expr, n_vars):
     model_sym = simplify(model_sym, ratio=1)
     return model_sym
 
-
-def evaluate_equality(true_model, cleaned_model):
-    sym_diff = round_floats(true_model - cleaned_model)
-    sym_frac = round_floats(cleaned_model / true_model)
-    # check if we can skip simplification
-
-    if not sym_diff.is_constant() or sym_frac.is_constant():
-        sym_diff = round_floats(simplify(sym_diff, ratio=1))
+def post_process_symexpr(sym_diff, sym_frac):
+    try:
+        if not sym_diff.is_constant():
+            sym_diff = round_floats(simplify(sym_diff, ratio=1))
+        sym_diff_is_const = sym_diff.is_constant()
+    except:
+        sym_diff_is_const = False
 
     try:
         symbolic_frac_is_const = sym_frac.is_constant()
@@ -366,12 +365,25 @@ def evaluate_equality(true_model, cleaned_model):
     except:
         symbolic_frac_is_const = False
 
+    return (sym_diff, sym_frac, sym_diff_is_const, symbolic_frac_is_const)
+
+def evaluate_equality(true_model, cleaned_model):
+    sym_diff = round_floats(true_model - cleaned_model)
+    sym_frac = round_floats(cleaned_model / true_model)
+
+    results = run_with_timeout(post_process_symexpr, args=(sym_diff, sym_frac), timeout=120)
+
+    if results is None:
+        sym_diff, sym_frac, sym_diff_is_const, symbolic_frac_is_const = sym_diff, sym_frac, False, False
+    else:
+        sym_diff, sym_frac, sym_diff_is_const, symbolic_frac_is_const = results
+
     return {
         "true_model": str(true_model),
         "cleaned_model": str(cleaned_model),
         "symbolic_error": str(sym_diff),
         "symbolic_fraction": str(sym_frac),
         "symbolic_error_is_zero": str(sym_diff) == "0",
-        "symbolic_error_is_constant": sym_diff.is_constant(),
+        "symbolic_error_is_constant": sym_diff_is_const,
         "symbolic_fraction_is_constant": symbolic_frac_is_const,
     }

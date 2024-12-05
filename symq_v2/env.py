@@ -51,6 +51,7 @@ class SymbolicWorldEnv(gym.Env):
 
         # Initialize the step counter
         self.n_step = 0
+        self.tree = np.zeros((1, self._max_step, len(self._action_to_operation)))
 
         # agent expression
         self._agent_expr = AgentExpression()

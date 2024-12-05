@@ -3,6 +3,7 @@ import warnings
 from joblib import Parallel, delayed
 
 import torch
+import numpy as np
 import sympy as sp
 from sklearn.base import BaseEstimator, RegressorMixin
 from scipy.optimize.linesearch import LineSearchWarning
@@ -12,12 +13,13 @@ from bfgs import bfgs
 from beam_search import beam_search
 from util import load_cfg, get_seq2action, run_with_timeout, MODULES
 
+num_vars = 2
 
 class SymQRegressor(BaseEstimator, RegressorMixin):
-    def __init__(self, n_var=3):
+    def __init__(self):
         # Load the configuration file
         file_path = pathlib.Path(__file__).parent.absolute()
-        self.cfg = load_cfg(f"{file_path}/cfg_{n_var}var.yaml")
+        self.cfg = load_cfg(f"{file_path}/cfg_{num_vars}var.yaml")
         self.seq2action = get_seq2action(self.cfg)
         weights_path = f"{file_path}/{self.cfg.Inference.weights_path}"
 
@@ -29,23 +31,35 @@ class SymQRegressor(BaseEstimator, RegressorMixin):
 
         # Load the model
         self.model = SymQ(self.cfg, device).to(device)
-        model_state_dict = torch.load(weights_path, map_location="cpu")[
-            "model_state_dict"
-        ]
-        state_dict = {k.replace("module.", ""): v for k, v in model_state_dict.items()}
+        try:
+            model_state_dict = torch.load(weights_path, map_location="cpu")[
+                "model_state_dict"
+            ]
+            state_dict = {k.replace("module.", ""): v for k, v in model_state_dict.items()}
+        except KeyError:
+            model_state_dict = torch.load(weights_path, map_location="cpu")
+            state_dict = {k.replace("module.", ""): v for k, v in model_state_dict.items()}
+        
         self.model.load_state_dict(state_dict)
         self.model.eval()
 
         self.sympy_expr = None
+        self.traversal = []
+        self.traversals = []
         self.lambdified_func = None
         self.variables_in_expr = None
         self.candidates = []
+        self.normalized = self.cfg.Inference.normalized
+        self.normalization_val = []
 
     def fit(self, X, y, **kwargs):
         self.sympy_expr = None
+        self.traversal = []
+        self.traversals = []
         self.lambdified_func = None
         self.variables_in_expr = None
         self.candidates = []
+        self.normalization_val = []
 
         if X.shape[1] > self.cfg.num_vars:
             raise ValueError(
@@ -61,12 +75,28 @@ class SymQRegressor(BaseEstimator, RegressorMixin):
                 if var_name in self.seq2action:
                     mask[self.seq2action[var_name]] = 0
 
-        # TODO: additional mask for the constants
+        # Normalize the data
+        if self.normalized:
+            x_mean = np.mean(X, axis=0)
+            x_std = np.std(X, axis=0)
+            self.normalization_val = [x_mean, x_std]
+            # Normalize the data to -10 to 10
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                X = (X - x_mean) / x_std * 10
+            X[np.isnan(X)] = 0
 
         # Subset the data
         n_points = self.cfg.Inference.n_points
-        X = X[:n_points, :]
-        y = y[:n_points]
+        # Generate a random permutation of indices
+        indices = np.random.permutation(X.shape[0])
+
+        # Shuffle X and y using the permutation indices
+        X_shuffled = X[indices]
+        y_shuffled = y[indices]
+
+        X = X_shuffled[:n_points, :]
+        y = y_shuffled[:n_points]
 
         # Run the beam search
         done_candidates = beam_search(
@@ -80,7 +110,14 @@ class SymQRegressor(BaseEstimator, RegressorMixin):
             self.cfg.Inference.penalize_length,
         )
 
+        self.traversals = [can["traversal"] for can in done_candidates]
+
         # Run the BFGS optimization
+        if "const_candidate" in kwargs:
+            const_candidate = kwargs["const_candidate"]
+        else:
+            const_candidate = []
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)
             warnings.simplefilter("ignore", category=LineSearchWarning)
@@ -89,9 +126,10 @@ class SymQRegressor(BaseEstimator, RegressorMixin):
                     bfgs,
                     args=(
                         candidate["skeleton"],
+                        candidate["traversal"],
                         X,
                         y,
-                        [],
+                        const_candidate,
                         self.cfg.Inference.n_try,
                         self.cfg.Inference.n_jobs,
                     ),
@@ -107,7 +145,12 @@ class SymQRegressor(BaseEstimator, RegressorMixin):
             self.candidates = valid_candidates
             best_candidate = max(valid_candidates, key=lambda x: (x["r2"], -x["mse"]))
             expr = best_candidate["expression"]
+            if self.normalized:
+                x_mean, x_std = self.normalization_val
+                for idx in range(X.shape[1]):
+                    expr = expr.replace(f"x_{idx+1}", f"(x_{idx+1} - {x_mean[idx]}) / {x_std[idx]} * 10")
             self.sympy_expr = sp.sympify(expr)
+            self.traversal = best_candidate["traversal"]
 
             # Precompile the lambdified function
             self.variables_in_expr = sorted(

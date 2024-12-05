@@ -1,10 +1,10 @@
 max_step: 30
-num_vars: 2
+num_vars: 3
 num_points: 100
 
 training:
   seed: 0
-  batch_size: 2048
+  batch_size: 512
   epochs: 20
   lr: 0.0001
   use_scaler: False
@@ -13,24 +13,23 @@ training:
   num_workers: 16            # DO NOT increase this while pusing DDP
   no_cuda: False             # disables CUDA training
   resume_path:               # model checkpoint
-  dataset_num:              # Number of file data_i.json to load as a dataset
   visible_devices: [0,1,2]   # Set here the visible GPUs
 
 logging:
   log_interval: 5000 # how many batches to wait before logging training status
-  wandb: True
+  wandb: False
   save_model: True
 
 loss:
   ql: 100 # 100 for mse, 1 for crossentropy
-  cl: 0.5 # 0.1 / 0.5 / 1
+  cl: 0.5
 
 Dataset:
-  batch_size: 500
-  num_train_skeletons: 1000000
-  num_val_skeletons: 500
+  batch_size: 1000
+  num_train_skeletons: 10000000
+  num_val_skeletons: 1000
   num_per_eq: 5
-  dataset_folder: "/backup/wenzhou/Dataset"   # Your Dataset Folder Path
+  dataset_folder: ""   # Your Dataset Folder Path
   constants:
     num_constants: 3
     additive:
@@ -71,3 +70,15 @@ TreeEncoder:
   num_heads: 8
   num_layers: 5
   dim_output: 512
+
+Inference:
+  weights_path: ""  # Your model checkpoint path
+  use_gpu: True
+  n_points: 300
+  n_jobs: -1
+  beam_size: 128
+  n_try: 20
+  timeout: 120
+  penalize_length: false
+  seed: 11
+  normalized: False

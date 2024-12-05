@@ -1,0 +1,47 @@
+DEBUG: True
+max_step: 30
+num_actions: 30
+num_points: 100
+
+Dataset:
+  noise_level: 0.01
+
+SymQ:
+  embedding_fusion: "concat" # "concat" or "add"
+  set_skip_connection: False
+  dim_hidden: 4096
+  batch_norm: False
+  num_actions: 30
+
+SetEncoder:
+  sinuisodal_embeddings: False
+  dec_pf_dim: 512
+  dec_layers: 5
+  dim_hidden: 512
+  lr: 0.0001
+  dropout: 0
+  num_features: 100
+  ln: True
+  N_p: 0
+  num_inds: 100
+  activation: "relu"
+  bit16: True
+  norm: True
+  linear: False
+  input_normalization: False
+  src_pad_idx: 0
+  trg_pad_idx: 0
+  length_eq: 60
+  n_l_enc: 5
+  mean: 0.5  
+  std: 0.5 
+  dim_input: 3
+  num_heads: 8
+  dim_output: 512
+
+TreeEncoder:
+  dim_input: [30, 30]
+  dim_hidden: 512
+  num_heads: 8
+  num_layers: 5
+  dim_output: 512
