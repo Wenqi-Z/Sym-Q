@@ -56,6 +56,7 @@ def run(
     perf_track=None,
     mode="train",
     scaler=None,
+    use_cuda=True,
 ):
     total_correct = 0
     total_samples = 0
@@ -64,7 +65,11 @@ def run(
     total_cl_loss = 0
     total_loss = 0
 
-    gpu_id = cfg.training.visible_devices[rank]
+    if use_cuda:
+        gpu_id = cfg.training.visible_devices[rank]
+    else:
+        gpu_id = "cpu"
+    device = torch.device(gpu_id)
 
     log_perf = rank == 0 and perf_track is not None and mode == "train"
 
@@ -169,7 +174,7 @@ def run(
                         perf_track["opt_time"].append(opt_time - loss_time)
                         perf_track["update_time"].append(opt_time - data_time)
                         perf_track["R0_memory"].append(
-                            torch.cuda.memory_allocated(gpu_id)
+                            torch.cuda.memory_allocated(device)
                         )
 
                 # Documentation
@@ -180,17 +185,17 @@ def run(
     loss_dict = {}
 
     # Reduce loss across all processes
-    total_q_loss_tensor = torch.tensor(total_q_loss).to(rank) / len(dataloader)
-    total_cl_loss_tensor = torch.tensor(total_cl_loss).to(rank) / len(dataloader)
-    total_loss_tensor = torch.tensor(total_loss).to(rank) / len(dataloader)
+    total_q_loss_tensor = torch.tensor(total_q_loss).to(gpu_id) / len(dataloader)
+    total_cl_loss_tensor = torch.tensor(total_cl_loss).to(gpu_id) / len(dataloader)
+    total_loss_tensor = torch.tensor(total_loss).to(gpu_id) / len(dataloader)
 
     dist.all_reduce(total_q_loss_tensor, op=dist.ReduceOp.SUM)
     dist.all_reduce(total_cl_loss_tensor, op=dist.ReduceOp.SUM)
     dist.all_reduce(total_loss_tensor, op=dist.ReduceOp.SUM)
 
     # Reduce accuracy across all processes
-    correct_predictions_tensor = torch.tensor(total_correct).to(rank)
-    total_predictions_tensor = torch.tensor(total_samples).to(rank)
+    correct_predictions_tensor = torch.tensor(total_correct).to(gpu_id)
+    total_predictions_tensor = torch.tensor(total_samples).to(gpu_id)
 
     dist.all_reduce(correct_predictions_tensor, op=dist.ReduceOp.SUM)
     dist.all_reduce(total_predictions_tensor, op=dist.ReduceOp.SUM)
@@ -306,15 +311,20 @@ def launch(rank, world_size, cfg, use_cuda):
     # ------------Model & Opt-------------#
 
     # Initialize model and optimizer
-    gpu_id = cfg.training.visible_devices[rank]
+    if use_cuda:
+        gpu_id = cfg.training.visible_devices[rank]
+    else:
+        gpu_id = "cpu"
     model = SymQ(cfg, gpu_id).to(gpu_id)
     print(f"[ Rank {rank} ]: Model running on device {gpu_id}")
 
     if cfg["SymQ"]["use_pretrain"]:
-        pretrain_weights = torch.load(cfg["SymQ"]["pretrain_path"])["state_dict"]
+        device = torch.device(gpu_id)
+        pretrain_weights = torch.load(cfg["SymQ"]["pretrain_path"], map_location=device)["state_dict"]
         encoder_weights = {
             k[4:]: v for k, v in pretrain_weights.items() if k.startswith("enc.")
         }
+        
         model.set_encoder.load_state_dict(encoder_weights, strict=True)
 
     if cfg["SymQ"]["freeze_encoder"]:
@@ -340,7 +350,8 @@ def launch(rank, world_size, cfg, use_cuda):
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         print(f"[ Rank {rank} ]: Model loaded from {cfg.training.resume_path}")
 
-    model = DDP(model, device_ids=[gpu_id], find_unused_parameters=False)
+    if use_cuda:
+        model = DDP(model, device_ids=[gpu_id], find_unused_parameters=False)
 
     # --------------Logging--------------#
 
@@ -393,6 +404,7 @@ def launch(rank, world_size, cfg, use_cuda):
             best_train_loss,
             perf_track=perf_track,
             scaler=scaler,
+            use_cuda=use_cuda,
         )
 
         val_sampler.set_epoch(epoch)
@@ -406,6 +418,7 @@ def launch(rank, world_size, cfg, use_cuda):
             best_val_loss,
             perf_track=None,
             mode="eval",
+            use_cuda=use_cuda,
         )
         loss_log = {**train_loss_dict, **val_loss_dict}
 
